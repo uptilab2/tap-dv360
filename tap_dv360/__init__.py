@@ -72,18 +72,23 @@ def sync(config, state, catalog):
     for stream in catalog.get_selected_streams(state):
         LOGGER.info("Syncing stream:" + stream.tap_stream_id)
 
-        bookmark_column = stream.replication_key
-        is_sorted = True  # TODO: indicate whether data is sorted ascending on bookmark value
-
+        # Write schema for all streams
         singer.write_schema(
             stream_name=stream.tap_stream_id,
             schema=stream.schema,
-            key_properties=stream.key_properties,
+            key_properties=[],
         )
+
+        # Trigger query for streams, unless already running
+        if not state.get('tap_stream_id'):
+            #query
+            #update state with queryId
+            #emit state
 
         # TODO: delete and replace this inline function with your own data retrieval process:
         tap_data = lambda: [{"id": x, "name": "row${x}"} for x in range(1000)]
 
+    for stream in catalog.get_selected_streams(state):
         max_bookmark = None
         for row in tap_data():
             # TODO: place type conversions or transformations here
@@ -130,11 +135,7 @@ def main():
         catalog.dump()
     # Otherwise run in sync mode
     else:
-        if args.catalog:
-            catalog = args.catalog
-        else:
-            catalog = discover()
-        sync(args.config, args.state, catalog)
+        sync(args.config, args.state, args.catalog)
 
 
 if __name__ == "__main__":
