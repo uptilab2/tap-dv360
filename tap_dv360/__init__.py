@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
+from google.oauth2.credentials import Credentials
+from googleapiclient import discovery
 import singer
 from singer import utils
 from singer.catalog import Catalog, CatalogEntry
 from singer.schema import Schema
 
+LOGGER = singer.get_logger()
+
+API_NAME = 'doubleclickbidmanager'
+API_VERSION = 'v1.1'
 
 REQUIRED_CONFIG_KEYS = [
     "refresh_token",
@@ -12,50 +18,51 @@ REQUIRED_CONFIG_KEYS = [
     "client_secret",
     "start_date",
 ]
-LOGGER = singer.get_logger()
-
 
 
 def discover(client):
     streams = []
-    response = client.queries().listqueries().execute()
     #TODO handle pagination with response['nextPageToken']
-    for query_resource in response['queries']:
-        schema = {
-            'type': ['null', 'object'],
-            'additionalProperties': False,
-            'properties': {
-                **{
-                    key: {'type': ['null', 'string']}
-                    for key in query_resource['params']['groupBys']
-                },
-                **{
-                    key: {'type': ['null', 'number']}
-                    for key in query_resource['params']['metrics']
-                },
+    request = client.queries().listqueries()
+    while request is not None:
+        response = request.execute()
+        for query_resource in response['queries']:
+            schema = {
+                'type': ['null', 'object'],
+                'additionalProperties': False,
+                'properties': {
+                    **{
+                        key: {'type': ['null', 'string']}
+                        for key in query_resource['params']['groupBys']
+                    },
+                    **{
+                        key: {'type': ['null', 'number']}
+                        for key in query_resource['params']['metrics']
+                    },
+                }
             }
-        }
-        metadata = [
-            {
-                'breadcrumb': [],
-                'metadata': {'replication-method': 'FULL_TABLE'},
-            },
-        ]
-        streams.append(
-            CatalogEntry(
-                tap_stream_id=query_resource['queryId'],
-                stream=query_resource['metadata']['title'],
-                schema=Schema.from_dict(schema),
-                key_properties=[],
-                metadata=metadata,
-                replication_key=None,
-                is_view=None,
-                database=None,
-                table=None,
-                row_count=None,
-                stream_alias=None,
+            metadata = [
+                {
+                    'breadcrumb': [],
+                    'metadata': {'replication-method': 'FULL_TABLE'},
+                },
+            ]
+            streams.append(
+                CatalogEntry(
+                    tap_stream_id=query_resource['queryId'],
+                    stream=query_resource['metadata']['title'],
+                    schema=Schema.from_dict(schema),
+                    key_properties=[],
+                    metadata=metadata,
+                    replication_key=None,
+                    is_view=None,
+                    database=None,
+                    table=None,
+                    row_count=None,
+                    stream_alias=None,
+                )
             )
-        )
+        request = client.queries().listqueries_next(request, response)
     return Catalog(streams)
 
 
@@ -95,10 +102,6 @@ def sync(config, state, catalog):
     return
 
 
-from google.oauth2.credentials import Credentials
-from googleapiclient import discovery
-API_NAME = 'doubleclickbidmanager'
-API_VERSION = 'v1.1'
 def get_client_from_config(config):
     credentials = Credentials(
         None,  # no access token here, generated from refresh token
@@ -107,8 +110,12 @@ def get_client_from_config(config):
         client_id=config['client_id'],
         client_secret=config['client_secret'],
     )
-    return discovery.build(API_NAME, API_VERSION, credentials=credentials)
-
+    return discovery.build(
+        API_NAME,
+        API_VERSION,
+        credentials=credentials,
+        cache_discovery=False,  # to avoid warnings
+    )
 
 
 @utils.handle_top_exception(LOGGER)
