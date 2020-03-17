@@ -1,5 +1,7 @@
 {
-  "username": "my_username",
-  "password": "my_password",
-  "start_date": "2017-01-01T00:00:00Z"
+  "refresh_token": "<REFRESH_TOKEN>",
+  "token_uri": "https://accounts.google.com/o/oauth2/token",
+  "client_id": "<CLIENT_ID>.apps.googleusercontent.com",
+  "client_secret": "<CLIENT_SECRET>",
+  "start_date": "2020-03-10"
 }

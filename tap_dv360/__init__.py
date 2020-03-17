@@ -1,52 +1,59 @@
 #!/usr/bin/env python3
-import os
-import json
 import singer
-from singer import utils, metadata
+from singer import utils
 from singer.catalog import Catalog, CatalogEntry
 from singer.schema import Schema
 
 
-REQUIRED_CONFIG_KEYS = ["start_date", "username", "password"]
+REQUIRED_CONFIG_KEYS = [
+    "refresh_token",
+    "token_uri",
+    "client_id",
+    "client_secret",
+    "start_date",
+]
 LOGGER = singer.get_logger()
 
 
-def get_abs_path(path):
-    return os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
 
-
-def load_schemas():
-    """ Load schemas from schemas folder """
-    schemas = {}
-    for filename in os.listdir(get_abs_path('schemas')):
-        path = get_abs_path('schemas') + '/' + filename
-        file_raw = filename.replace('.json', '')
-        with open(path) as file:
-            schemas[file_raw] = Schema.from_dict(json.load(file))
-    return schemas
-
-
-def discover():
-    raw_schemas = load_schemas()
+def discover(client):
     streams = []
-    for stream_id, schema in raw_schemas.items():
-        # TODO: populate any metadata and stream's key properties here..
-        stream_metadata = []
-        key_properties = []
+    response = client.queries().listqueries().execute()
+    #TODO handle pagination with response['nextPageToken']
+    for query_resource in response['queries']:
+        schema = {
+            'type': ['null', 'object'],
+            'additionalProperties': False,
+            'properties': {
+                **{
+                    key: {'type': ['null', 'string']}
+                    for key in query_resource['params']['groupBys']
+                },
+                **{
+                    key: {'type': ['null', 'number']}
+                    for key in query_resource['params']['metrics']
+                },
+            }
+        }
+        metadata = [
+            {
+                'breadcrumb': [],
+                'metadata': {'replication-method': 'FULL_TABLE'},
+            },
+        ]
         streams.append(
             CatalogEntry(
-                tap_stream_id=stream_id,
-                stream=stream_id,
-                schema=schema,
-                key_properties=key_properties,
-                metadata=stream_metadata,
+                tap_stream_id=query_resource['queryId'],
+                stream=query_resource['metadata']['title'],
+                schema=Schema.from_dict(schema),
+                key_properties=[],
+                metadata=metadata,
                 replication_key=None,
                 is_view=None,
                 database=None,
                 table=None,
                 row_count=None,
                 stream_alias=None,
-                replication_method=None,
             )
         )
     return Catalog(streams)
@@ -88,14 +95,31 @@ def sync(config, state, catalog):
     return
 
 
+from google.oauth2.credentials import Credentials
+from googleapiclient import discovery
+API_NAME = 'doubleclickbidmanager'
+API_VERSION = 'v1.1'
+def get_client_from_config(config):
+    credentials = Credentials(
+        None,  # no access token here, generated from refresh token
+        token_uri=config['token_uri'],
+        refresh_token=config['refresh_token'],
+        client_id=config['client_id'],
+        client_secret=config['client_secret'],
+    )
+    return discovery.build(API_NAME, API_VERSION, credentials=credentials)
+
+
+
 @utils.handle_top_exception(LOGGER)
 def main():
     # Parse command line arguments
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
+    client = get_client_from_config(args.config)
 
     # If discover flag was passed, run discovery mode and dump output to stdout
     if args.discover:
-        catalog = discover()
+        catalog = discover(client)
         catalog.dump()
     # Otherwise run in sync mode
     else:

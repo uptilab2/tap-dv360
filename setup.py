@@ -13,14 +13,13 @@ setup(
         "singer-python>=5.0.12",
         "requests",
         "google-api-python-client",
+        "oauth2client",
     ],
     entry_points="""
     [console_scripts]
     tap-dv360=tap_dv360:main
     """,
     packages=["tap_dv360"],
-    package_data = {
-        "schemas": ["tap_dv360/schemas/*.json"]
-    },
-    include_package_data=True,
+    package_data = {}
+    include_package_data=False,
 )
