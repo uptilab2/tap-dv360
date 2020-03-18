@@ -16,8 +16,23 @@ REQUIRED_CONFIG_KEYS = [
     "token_uri",
     "client_id",
     "client_secret",
-    "start_date",
 ]
+
+def build_schema(query_resource):
+    return Schema.from_dict({
+        'type': ['null', 'object'],
+        'additionalProperties': False,
+        'properties': {
+            **{
+                key: {'type': ['null', 'string']}
+                for key in query_resource['params']['groupBys']
+            },
+            **{
+                key: {'type': ['null', 'number']}
+                for key in query_resource['params']['metrics']
+            },
+        }
+    })
 
 
 def discover(client):
@@ -27,20 +42,6 @@ def discover(client):
     while request is not None:
         response = request.execute()
         for query_resource in response['queries']:
-            schema = {
-                'type': ['null', 'object'],
-                'additionalProperties': False,
-                'properties': {
-                    **{
-                        key: {'type': ['null', 'string']}
-                        for key in query_resource['params']['groupBys']
-                    },
-                    **{
-                        key: {'type': ['null', 'number']}
-                        for key in query_resource['params']['metrics']
-                    },
-                }
-            }
             metadata = [
                 {
                     'breadcrumb': [],
@@ -51,7 +52,7 @@ def discover(client):
                 CatalogEntry(
                     tap_stream_id=query_resource['queryId'],
                     stream=query_resource['metadata']['title'],
-                    schema=Schema.from_dict(schema),
+                    schema=build_schema(query_resource),
                     key_properties=[],
                     metadata=metadata,
                     replication_key=None,
@@ -66,11 +67,72 @@ def discover(client):
     return Catalog(streams)
 
 
-def sync(config, state, catalog):
+def sync(client, catalog):
     """ Sync data from tap source """
     # Loop over selected streams in catalog
-    for stream in catalog.get_selected_streams(state):
+    queries = {}
+
+    # Get current status for each query
+    for stream in catalog.streams:#catalog.get_selected_streams(state):
         LOGGER.info("Syncing stream:" + stream.tap_stream_id)
+        request = client.queries().getquery(queryId=stream.tap_stream_id)
+        queries[stream.tap_stream_id] = request.execute()
+
+    # Trigger execution when needed
+    now = datetime.now()
+    for query_id, query_resource in queries.items():
+        if query_resource['metadata']['running']:
+            # skip already running
+            LOGGER.info(f'Query {query_id} is already running')
+            continue
+
+        if query_resource['metadata']['lastReportRunTimeMs']:
+            # skip recently executed (< 1h)
+            last_run = datetime.fromtimestamp(int(query_resource['metadata']['lastReportRunTimeMs'][:-3]))
+            if (now - last_run) < timedelta(hours=1):
+                LOGGER.info(f'Query {query_id} is was ran less than 1h ago')
+                continue
+
+        # Trigger the others
+        schedule = query_resource.get('schedule')
+        request = client.queries().runquery(queryId=query_id, body={
+            'dataRange': 'ALL_TIME',
+            'timezoneCode': schedule['nextRunTimezoneCode'] if schedule else 'Europe/Paris',
+        })
+        LOGGER.info(f'Running query {query_id}')
+        request.execute()
+
+        # Refresh query status
+        request = client.queries().getquery(queryId=query_id)
+        queries[query_id] = request.execute()
+
+        # Check query is running
+        if not queries[query_id]['metadata']['running']:
+            raise Exception(f'Unable to run query {query_id}: {queries[query_id]}')
+
+    # Wait for all queries to finish
+    running = set(queries)
+    iteration = 0
+    while running:
+        for query_id in running:
+            request = client.queries().getquery(queryId=query_id)
+            queries[query_id] = request.execute()
+        running = {query_id for query_id, query_resource in queries.items() if query_resource['metadata']['running']}
+        if running:
+            LOGGER.info(f'Waiting for queries {running} to finish...')
+            # sleep 10 sec the first 2 minutes, then 1 minute. rocket science.
+            iteration += 1
+            time.sleep(10 if iteration < 12 else 60)
+
+    LOGGER.info('All queries completed !')
+    for query_id, query_resource in queries:
+
+
+
+        # Download report
+        # Write schema
+        # Write data
+    """
 
         # Write schema for all streams
         singer.write_schema(
@@ -80,7 +142,7 @@ def sync(config, state, catalog):
         )
 
         # Trigger query for streams, unless already running
-        if not state.get('tap_stream_id'):
+        #if not state.get('tap_stream_id'):
             #query
             #update state with queryId
             #emit state
@@ -104,6 +166,7 @@ def sync(config, state, catalog):
                     max_bookmark = max(max_bookmark, row[bookmark_column])
         if bookmark_column and not is_sorted:
             singer.write_state({stream.tap_stream_id: max_bookmark})
+    """
     return
 
 
@@ -135,7 +198,7 @@ def main():
         catalog.dump()
     # Otherwise run in sync mode
     else:
-        sync(args.config, args.state, args.catalog)
+        sync(client, args.catalog)
 
 
 if __name__ == "__main__":
