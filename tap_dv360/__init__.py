@@ -2,7 +2,7 @@
 
 import csv
 from datetime import datetime, timedelta
-from io import BytesIO
+from io import StringIO
 import time
 
 from google.oauth2.credentials import Credentials
@@ -95,20 +95,23 @@ def sync(client, config, catalog):
 
     # Trigger execution when needed
     now = datetime.now()
-    for query_id, query_resource in queries.items():
-        if query_resource['metadata']['running']:
-            # skip already running
-            LOGGER.info(f'Query {query_id} is already running')
-            continue
+    running = set()
 
+    for query_id, query_resource in queries.items():
         if query_resource['metadata']['latestReportRunTimeMs']:
             # skip recently executed
             last_run = datetime.fromtimestamp(
                 int(query_resource['metadata']['latestReportRunTimeMs'][:-3])
             )
             if (now - last_run) < timedelta(minutes=int(config['rerun_threshold'] or 60)):
-                LOGGER.info(f'Query {query_id} is was ran less than 1h ago')
+                LOGGER.info(f'Query {query_id} is was ran less than {config["rerun_threshold"]}min ago')
                 continue
+
+        if query_resource['metadata']['running']:
+            # skip already running
+            LOGGER.info(f'Query {query_id} is already running')
+            running.add(query_id)
+            continue
 
         # Trigger the others
         schedule = query_resource.get('schedule')
@@ -126,16 +129,17 @@ def sync(client, config, catalog):
         # Check query is running
         if not queries[query_id]['metadata']['running']:
             raise Exception(f'Unable to run query {query_id}: {queries[query_id]}')
+        running.add(query_id)
 
     # Wait for all queries to finish
-    running = set(queries)
     iteration = 0
     while running:
         for query_id in running:
             request = client.queries().getquery(queryId=query_id)
             queries[query_id] = request.execute()
             LOGGER.info(queries[query_id]['metadata'])
-        running = {query_id for query_id, query_resource in queries.items() if query_resource['metadata']['running']}
+            if not queries[query_id]['metadata']['running']:
+                running.remove(query_id)
         if running:
             LOGGER.info(f'Waiting for queries {running} to finish...')
             # sleep 10 sec the first 2 minutes, then 1 minute. rocket science.
@@ -144,18 +148,32 @@ def sync(client, config, catalog):
 
     LOGGER.info('All queries completed !')
     for query_id, query_resource in queries.items():
+        # Retrieve result csv from cloud storage signed url
         url = query_resource['metadata']['googleCloudStoragePathForLatestReport']
         response = requests.get(url)
-        reader = csv.reader(BytesIO(response.body), delimiter=',', quotechar='"')
+
+        # Use csv reader to iterate on rows data
+        reader = csv.reader(
+            StringIO(response.content.decode()),
+            delimiter=',',
+            quotechar='"'
+        )
+
+        # Transform rows in singer-style dicts
+        dimensions = query_resource['params']['groupBys']
+        metrics = query_resource['params']['metrics']
         records = []
         for line_no, line in enumerate(reader):
-            # Skip initial line
             if line_no == 0:
+                # Skip initial line
                 continue
-            keys = query_resource['params']['groupBys'] + query_resource['params']['metrics']
 
             # Map data to schema names
-            records.append({key: value for (key, value) in zip(keys, line)})
+            record = {key: value for (key, value) in zip(dimensions + metrics, line)}
+            # No dimensions: sum line, stop here
+            if all([record[dim] == '' for dim in dimensions]):
+                break
+            records.append(record)
 
         # Write records to stdout
         singer.write_records(str(query_id), records)
