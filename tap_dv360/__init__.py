@@ -134,7 +134,7 @@ def sync(client, config, catalog):
     # Wait for all queries to finish
     iteration = 0
     while running:
-        for query_id in running:
+        for query_id in tuple(running):
             request = client.queries().getquery(queryId=query_id)
             queries[query_id] = request.execute()
             LOGGER.info(queries[query_id]['metadata'])
