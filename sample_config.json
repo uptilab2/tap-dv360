@@ -3,5 +3,5 @@
   "token_uri": "https://accounts.google.com/o/oauth2/token",
   "client_id": "<CLIENT_ID>.apps.googleusercontent.com",
   "client_secret": "<CLIENT_SECRET>",
-  "start_date": "2020-03-10"
+  "rerun_threshold": "60"
 }

@@ -23,6 +23,7 @@ REQUIRED_CONFIG_KEYS = [
     "token_uri",
     "client_id",
     "client_secret",
+    "rerun_threshold",
 ]
 
 
@@ -74,7 +75,7 @@ def discover(client):
     return Catalog(streams)
 
 
-def sync(client, catalog):
+def sync(client, config, catalog):
     """ Sync data from tap source """
     # Loop over selected streams in catalog
     queries = {}
@@ -101,11 +102,11 @@ def sync(client, catalog):
             continue
 
         if query_resource['metadata']['latestReportRunTimeMs']:
-            # skip recently executed (< 1h)
+            # skip recently executed
             last_run = datetime.fromtimestamp(
                 int(query_resource['metadata']['latestReportRunTimeMs'][:-3])
             )
-            if (now - last_run) < timedelta(hours=1):
+            if (now - last_run) < timedelta(minutes=int(config['rerun_threshold'] or 60)):
                 LOGGER.info(f'Query {query_id} is was ran less than 1h ago')
                 continue
 
@@ -142,7 +143,7 @@ def sync(client, catalog):
             time.sleep(10 if iteration < 12 else 60)
 
     LOGGER.info('All queries completed !')
-    for query_id, query_resource in queries:
+    for query_id, query_resource in queries.items():
         url = query_resource['metadata']['googleCloudStoragePathForLatestReport']
         response = requests.get(url)
         reader = csv.reader(BytesIO(response.body), delimiter=',', quotechar='"')
@@ -188,7 +189,7 @@ def main():
         catalog.dump()
     # Otherwise run in sync mode
     else:
-        sync(client, args.catalog)
+        sync(client, args.config, args.catalog)
 
 
 if __name__ == "__main__":
