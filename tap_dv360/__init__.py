@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
+
+import csv
+from datetime import datetime, timedelta
+from io import BytesIO
+import time
+
 from google.oauth2.credentials import Credentials
 from googleapiclient import discovery
+import requests
 import singer
 from singer import utils
 from singer.catalog import Catalog, CatalogEntry
@@ -17,6 +24,7 @@ REQUIRED_CONFIG_KEYS = [
     "client_id",
     "client_secret",
 ]
+
 
 def build_schema(query_resource):
     return Schema.from_dict({
@@ -37,7 +45,6 @@ def build_schema(query_resource):
 
 def discover(client):
     streams = []
-    #TODO handle pagination with response['nextPageToken']
     request = client.queries().listqueries()
     while request is not None:
         response = request.execute()
@@ -73,10 +80,17 @@ def sync(client, catalog):
     queries = {}
 
     # Get current status for each query
-    for stream in catalog.streams:#catalog.get_selected_streams(state):
+    for stream in catalog.get_selected_streams({}):
         LOGGER.info("Syncing stream:" + stream.tap_stream_id)
         request = client.queries().getquery(queryId=stream.tap_stream_id)
         queries[stream.tap_stream_id] = request.execute()
+
+        # Write schema
+        singer.write_schema(
+            stream_name=stream.tap_stream_id,
+            schema=stream.schema.to_dict(),
+            key_properties=[],
+        )
 
     # Trigger execution when needed
     now = datetime.now()
@@ -86,9 +100,11 @@ def sync(client, catalog):
             LOGGER.info(f'Query {query_id} is already running')
             continue
 
-        if query_resource['metadata']['lastReportRunTimeMs']:
+        if query_resource['metadata']['latestReportRunTimeMs']:
             # skip recently executed (< 1h)
-            last_run = datetime.fromtimestamp(int(query_resource['metadata']['lastReportRunTimeMs'][:-3]))
+            last_run = datetime.fromtimestamp(
+                int(query_resource['metadata']['latestReportRunTimeMs'][:-3])
+            )
             if (now - last_run) < timedelta(hours=1):
                 LOGGER.info(f'Query {query_id} is was ran less than 1h ago')
                 continue
@@ -117,6 +133,7 @@ def sync(client, catalog):
         for query_id in running:
             request = client.queries().getquery(queryId=query_id)
             queries[query_id] = request.execute()
+            LOGGER.info(queries[query_id]['metadata'])
         running = {query_id for query_id, query_resource in queries.items() if query_resource['metadata']['running']}
         if running:
             LOGGER.info(f'Waiting for queries {running} to finish...')
@@ -126,48 +143,21 @@ def sync(client, catalog):
 
     LOGGER.info('All queries completed !')
     for query_id, query_resource in queries:
+        url = query_resource['metadata']['googleCloudStoragePathForLatestReport']
+        response = requests.get(url)
+        reader = csv.reader(BytesIO(response.body), delimiter=',', quotechar='"')
+        records = []
+        for line_no, line in enumerate(reader):
+            # Skip initial line
+            if line_no == 0:
+                continue
+            keys = query_resource['params']['groupBys'] + query_resource['params']['metrics']
 
+            # Map data to schema names
+            records.append({key: value for (key, value) in zip(keys, line)})
 
-
-        # Download report
-        # Write schema
-        # Write data
-    """
-
-        # Write schema for all streams
-        singer.write_schema(
-            stream_name=stream.tap_stream_id,
-            schema=stream.schema,
-            key_properties=[],
-        )
-
-        # Trigger query for streams, unless already running
-        #if not state.get('tap_stream_id'):
-            #query
-            #update state with queryId
-            #emit state
-
-        # TODO: delete and replace this inline function with your own data retrieval process:
-        tap_data = lambda: [{"id": x, "name": "row${x}"} for x in range(1000)]
-
-    for stream in catalog.get_selected_streams(state):
-        max_bookmark = None
-        for row in tap_data():
-            # TODO: place type conversions or transformations here
-
-            # write one or more rows to the stream:
-            singer.write_records(stream.tap_stream_id, [row])
-            if bookmark_column:
-                if is_sorted:
-                    # update bookmark to latest value
-                    singer.write_state({stream.tap_stream_id: row[bookmark_column]})
-                else:
-                    # if data unsorted, save max value until end of writes
-                    max_bookmark = max(max_bookmark, row[bookmark_column])
-        if bookmark_column and not is_sorted:
-            singer.write_state({stream.tap_stream_id: max_bookmark})
-    """
-    return
+        # Write records to stdout
+        singer.write_records(str(query_id), records)
 
 
 def get_client_from_config(config):
