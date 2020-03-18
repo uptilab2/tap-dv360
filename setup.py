@@ -20,6 +20,6 @@ setup(
     tap-dv360=tap_dv360:main
     """,
     packages=["tap_dv360"],
-    package_data = {}
+    package_data = {},
     include_package_data=False,
 )
