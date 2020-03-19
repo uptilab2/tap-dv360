@@ -141,7 +141,6 @@ def sync(client, config, catalog):
         running.add(query_id)
 
     # Wait for all queries to finish
-    iteration = 0
     while running:
         for query_id in tuple(running):
             queries[query_id] = get_query(client, query_id)
@@ -150,9 +149,7 @@ def sync(client, config, catalog):
                 running.remove(query_id)
         if running:
             LOGGER.info(f'Waiting for queries {running} to finish...')
-            # sleep 10 sec the first 2 minutes, then 1 minute. rocket science.
-            iteration += 1
-            time.sleep(10 if iteration < 12 else 60)
+            time.sleep(60)
 
     LOGGER.info('All queries completed !')
     for query_id, query_resource in queries.items():
