@@ -10,16 +10,17 @@ setup(
     classifiers=["Programming Language :: Python :: 3 :: Only"],
     py_modules=["tap_dv360"],
     install_requires=[
-        "singer-python>=5.0.12",
+        "singer-python",
         "requests",
         "google-api-python-client",
         "oauth2client",
+        "backoff",
     ],
     entry_points="""
     [console_scripts]
     tap-dv360=tap_dv360:main
     """,
     packages=["tap_dv360"],
-    package_data = {},
+    package_data={},
     include_package_data=False,
 )

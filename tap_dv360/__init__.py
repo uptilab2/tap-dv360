@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 from io import StringIO
 import time
 
+import backoff
 from google.oauth2.credentials import Credentials
-from googleapiclient import discovery
+from googleapiclient import discovery, errors
 import requests
 import singer
 from singer import utils
@@ -42,6 +43,16 @@ def build_schema(query_resource):
             },
         }
     })
+
+
+@backoff.on_exception(backoff.expo,
+                      errors.HTTPError,
+                      max_tries=10,
+                      giveup=lambda e: 400 <= e.resp.status < 500)
+@backoff.on_exception(backoff.expo, BrokenPipeError, max_tries=3)
+def get_query(client, query_id):
+    request = client.queries().getquery(queryId=query_id)
+    return request.execute()
 
 
 def discover(client):
@@ -83,8 +94,7 @@ def sync(client, config, catalog):
     # Get current status for each query
     for stream in catalog.get_selected_streams({}):
         LOGGER.info("Syncing stream:" + stream.tap_stream_id)
-        request = client.queries().getquery(queryId=stream.tap_stream_id)
-        queries[stream.tap_stream_id] = request.execute()
+        queries[stream.tap_stream_id] = get_query(client, stream.tap_stream_id)
 
         # Write schema
         singer.write_schema(
@@ -123,8 +133,7 @@ def sync(client, config, catalog):
         request.execute()
 
         # Refresh query status
-        request = client.queries().getquery(queryId=query_id)
-        queries[query_id] = request.execute()
+        queries[query_id] = get_query(client, query_id)
 
         # Check query is running
         if not queries[query_id]['metadata']['running']:
@@ -135,8 +144,7 @@ def sync(client, config, catalog):
     iteration = 0
     while running:
         for query_id in tuple(running):
-            request = client.queries().getquery(queryId=query_id)
-            queries[query_id] = request.execute()
+            queries[query_id] = get_query(client, query_id)
             LOGGER.info(queries[query_id]['metadata'])
             if not queries[query_id]['metadata']['running']:
                 running.remove(query_id)
