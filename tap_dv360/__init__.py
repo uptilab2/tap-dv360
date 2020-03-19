@@ -46,7 +46,7 @@ def build_schema(query_resource):
 
 
 @backoff.on_exception(backoff.expo,
-                      errors.HTTPError,
+                      errors.HttpError,
                       max_tries=10,
                       giveup=lambda e: 400 <= e.resp.status < 500)
 @backoff.on_exception(backoff.expo, BrokenPipeError, max_tries=3)
