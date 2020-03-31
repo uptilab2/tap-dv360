@@ -177,8 +177,12 @@ def sync(client, config, catalog):
             # Map data to schema names
             record = {key: value for (key, value) in zip(dimensions + metrics, line)}
             # No dimensions: sum line, stop here
-            if all([record[dim] == '' for dim in dimensions]):
-                break
+            try:
+                if all([not record.get(dim) for dim in dimensions]):
+                    break
+            except Exception:
+                LOGGER.error(record)
+                raise
             records.append(record)
 
         # Write records to stdout
