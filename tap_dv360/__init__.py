@@ -60,6 +60,7 @@ def discover(client):
     request = client.queries().listqueries()
     while request is not None:
         response = request.execute()
+        LOGGER.info(response)
         for query_resource in response['queries']:
             metadata = [
                 {
