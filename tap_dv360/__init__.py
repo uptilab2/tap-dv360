@@ -61,7 +61,7 @@ def discover(client):
     while request is not None:
         response = request.execute()
         LOGGER.info(response)
-        for query_resource in response['queries']:
+        for query_resource in response.get('queries', []):
             metadata = [
                 {
                     'breadcrumb': [],
