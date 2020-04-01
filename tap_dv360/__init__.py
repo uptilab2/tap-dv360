@@ -156,6 +156,7 @@ def sync(client, config, catalog):
     for query_id, query_resource in queries.items():
         # Retrieve result csv from cloud storage signed url
         url = query_resource['metadata']['googleCloudStoragePathForLatestReport']
+        LOGGER.info(f'Downloading report: {url}')
         response = requests.get(url)
 
         # Use csv reader to iterate on rows data
@@ -175,7 +176,7 @@ def sync(client, config, catalog):
                 continue
 
             # Map data to schema names
-            record = {key: value for (key, value) in zip(dimensions + metrics, line)}
+            record = {key: (value if value != '-' else 0) for (key, value) in zip(dimensions + metrics, line)}
             # No dimensions: sum line, stop here
             try:
                 if all([not record.get(dim) for dim in dimensions]):
